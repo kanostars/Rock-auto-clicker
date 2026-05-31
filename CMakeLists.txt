@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ==========================================
-# 1. 定义本地 ImGui 的路径
+# 1. 定义本地的路径
 # ==========================================
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui")
 set(INTERCEPTION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/interception")
@@ -24,13 +24,23 @@ set(IMGUI_SOURCES
 
 # 3. 包含头文件路径
 include_directories(
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${INTERCEPTION_DIR}
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
 )
 
+# 4. 应用源码(按职责拆分)
+set(APP_SOURCES
+        src/app_state.cpp
+        src/clicker.cpp
+        src/gui.cpp
+        src/d3d_window.cpp
+)
+
 # WIN32 -> 不显示控制台窗口
-add_executable(DriverMouseMacro WIN32 main.cpp ${IMGUI_SOURCES})
+add_executable(DriverMouseMacro WIN32 main.cpp ${APP_SOURCES} ${IMGUI_SOURCES})
 
 # 链接 Interception 用户态 shim + DX11 渲染所需库
 target_link_libraries(DriverMouseMacro
@@ -46,3 +56,6 @@ add_custom_command(TARGET DriverMouseMacro POST_BUILD
         "${INTERCEPTION_DIR}/interception.dll"
         $<TARGET_FILE_DIR:DriverMouseMacro>
 )
+
+target_link_options(DriverMouseMacro PRIVATE
+        -static-libgcc -static-libstdc++ -static -lpthread)
