@@ -12,7 +12,14 @@ namespace app {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     std::uniform_int_distribution<int> offset_dist(-2, 2);
-    std::uniform_int_distribution<int> press_dist(30, 50);
+    // 每次点击重新读取参数,改参数后立即生效
+    auto sample_press_ms = [&]() {
+        const int base = param_press_base_ms.load();
+        const int jitter_max = param_press_jitter_ms.load();
+        if (jitter_max <= 0) return base;
+        std::uniform_int_distribution<int> d(0, jitter_max);
+        return base + d(gen);
+    };
 
     int clicks_this_round = 0;
     bool was_running = false;
@@ -40,7 +47,7 @@ namespace app {
             click_down.state = INTERCEPTION_MOUSE_LEFT_BUTTON_DOWN;
             interception_send(g_context, mouse, (InterceptionStroke*)&click_down, 1);
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(press_dist(gen)));
+            std::this_thread::sleep_for(std::chrono::milliseconds(sample_press_ms()));
 
             // 3. 左键弹起
             InterceptionMouseStroke click_up = {};

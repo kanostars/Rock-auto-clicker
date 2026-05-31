@@ -17,6 +17,8 @@ extern InterceptionContext             g_context;
 // 用户可调参数
 extern std::atomic<int> param_loop_speed_ms;
 extern std::atomic<int> param_jitter_ms;
+extern std::atomic<int> param_press_base_ms;     // 左键按下基础持续时间
+extern std::atomic<int> param_press_jitter_ms;   // 按下持续时间的随机抖动上限
 extern std::atomic<int> param_clicks_per_rest;
 extern std::atomic<int> param_rest_seconds;
 

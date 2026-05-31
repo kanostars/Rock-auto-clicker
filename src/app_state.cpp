@@ -10,6 +10,8 @@ InterceptionContext             g_context = nullptr;
 
 std::atomic<int> param_loop_speed_ms{500};
 std::atomic<int> param_jitter_ms{100};
+std::atomic<int> param_press_base_ms{10};
+std::atomic<int> param_press_jitter_ms{10};
 std::atomic<int> param_clicks_per_rest{0};
 std::atomic<int> param_rest_seconds{3};
 

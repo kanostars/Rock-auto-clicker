@@ -82,6 +82,28 @@ void render_gui() {
 
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 4));
+            ImGui::TextUnformatted(u8"按键时长");
+            ImGui::Dummy(ImVec2(0, 4));
+
+            int press_base = param_press_base_ms.load();
+            if (ImGui::InputInt(u8"按下时长 (毫秒)", &press_base, 1, 5)) {
+                if (press_base < 1)   press_base = 1;
+                if (press_base > 500) press_base = 500;
+                param_press_base_ms.store(press_base);
+            }
+            ImGui::TextDisabled(u8"  左键按下后持续时间的基础值");
+
+            int press_jitter = param_press_jitter_ms.load();
+            if (ImGui::InputInt(u8"按下随机延迟 (毫秒)", &press_jitter, 1, 5)) {
+                if (press_jitter < 0)   press_jitter = 0;
+                if (press_jitter > 500) press_jitter = 500;
+                param_press_jitter_ms.store(press_jitter);
+            }
+            ImGui::TextDisabled(u8"  在基础值上额外加 0~该值 的随机抖动");
+            ImGui::Dummy(ImVec2(0, 8));
+
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 4));
             ImGui::TextUnformatted(u8"休息策略");
             ImGui::Dummy(ImVec2(0, 4));
 
@@ -152,31 +174,43 @@ void render_gui() {
     }
     ImGui::EndChild();
 
-    // ---- 底部固定按钮 ----
+    // ---- 底部固定按钮(开始/停止 分开,避免自动点击落在切换按钮上)----
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, 4));
     {
-        bool running = is_macro_running.load();
-        ImVec4 col = running ? ImVec4(0.85f, 0.30f, 0.30f, 1.0f)
-                             : ImVec4(0.20f, 0.65f, 0.35f, 1.0f);
-        ImVec4 col_h = running ? ImVec4(0.95f, 0.40f, 0.40f, 1.0f)
-                               : ImVec4(0.30f, 0.75f, 0.45f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, col);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col_h);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, col);
+        const bool running = is_macro_running.load();
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float btn_w = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
+        const ImVec2 btn_size(btn_w, 40);
 
-        const char* label = running ? u8"暂停 (Button 4)" : u8"开始 (Button 4)";
-        float btn_w = ImGui::GetContentRegionAvail().x;
-        if (ImGui::Button(label, ImVec2(btn_w, 40))) {
-            // 如果还没有活跃鼠标 ID,尝试默认第一个
+        // 开始按钮(running 时禁用)
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.65f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.75f, 0.45f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.65f, 0.35f, 1.0f));
+        ImGui::BeginDisabled(running);
+        if (ImGui::Button(u8"开始", btn_size)) {
             if (active_mouse_id.load() == 0) {
                 active_mouse_id.store(INTERCEPTION_MOUSE(0));
                 add_log("未检测到活跃鼠标,默认使用 MOUSE(0)");
             }
-            bool now = !is_macro_running.load();
-            is_macro_running.store(now);
-            add_log(std::string("[GUI] 切换 -> ") + (now ? "开启" : "关闭"));
+            is_macro_running.store(true);
+            add_log("[GUI] 开始");
         }
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine();
+
+        // 停止按钮(未运行时禁用)
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.40f, 0.40f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.85f, 0.30f, 0.30f, 1.0f));
+        ImGui::BeginDisabled(!running);
+        if (ImGui::Button(u8"停止", btn_size)) {
+            is_macro_running.store(false);
+            add_log("[GUI] 停止");
+        }
+        ImGui::EndDisabled();
         ImGui::PopStyleColor(3);
     }
 
