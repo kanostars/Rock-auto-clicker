@@ -36,7 +36,7 @@ namespace app {
 
         if (running && mouse != 0) {
             if (!was_running) {
-                add_log("连点循环已开启");
+                add_log("连点循环已开启", LogLevel::INFO);
                 was_running = true;
                 clicks_this_round = 0;
                 run_start_ms_epoch.store(now_ms());
@@ -69,7 +69,7 @@ namespace app {
             const int rest_sec = param_rest_seconds.load();
             if (per_rest > 0 && clicks_this_round >= per_rest) {
                 add_log("已完成 " + std::to_string(per_rest) + " 次点击,休息 " +
-                        std::to_string(rest_sec) + " 秒");
+                        std::to_string(rest_sec) + " 秒", LogLevel::INFO);
                 for (int i = 0; i < rest_sec * 10 && is_macro_running.load(); ++i) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
@@ -93,7 +93,7 @@ namespace app {
                     total_run_ms.fetch_add(static_cast<unsigned long long>(now_ms() - start));
                 }
                 run_start_ms_epoch.store(0);
-                add_log("连点循环已停止");
+                add_log("连点循环已停止", LogLevel::INFO);
                 was_running = false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -115,7 +115,7 @@ namespace app {
             if (mouse_stroke.state & INTERCEPTION_MOUSE_BUTTON_4_DOWN) {
                 bool now = !is_macro_running.load();
                 is_macro_running.store(now);
-                add_log(std::string("[侧键] 切换 -> ") + (now ? "开启" : "关闭"));
+                add_log(std::string("[侧键] 切换 -> ") + (now ? "开启" : "关闭"), LogLevel::BEHAVIOR);
                 continue; // 吞掉这次按下
             }
         }

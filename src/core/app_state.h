@@ -27,10 +27,17 @@ extern std::atomic<unsigned long long> total_click_count;
 extern std::atomic<unsigned long long> total_run_ms;       // 已累计的运行毫秒(不含暂停)
 extern std::atomic<long long>          run_start_ms_epoch; // 当前运行开始的时间戳(ms),0 表示未在运行
 
-// 日志缓冲(由 g_log_mutex 保护)
-extern std::mutex                g_log_mutex;
-extern std::vector<std::string>  g_log_lines;
+// 日志
+enum class LogLevel { INFO, BEHAVIOR, WARN, ERR };
 
-void add_log(const std::string& msg);
+struct LogEntry {
+    std::string text;   // 已含时间戳的完整字符串
+    LogLevel    level;
+};
+
+extern std::mutex                g_log_mutex;
+extern std::vector<LogEntry>     g_log_lines;
+
+void add_log(const std::string& msg, LogLevel level = LogLevel::INFO);
 
 } // namespace app

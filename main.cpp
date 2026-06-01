@@ -32,7 +32,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // ---- 启动后台线程 ----
     std::thread(app::macro_worker).detach();
     std::thread(app::interception_thread).detach();
-    app::add_log("连点器 v1.1 已启动");
+    app::add_log("连点器 v1.1 已启动", app::LogLevel::INFO);
 
     // ---- 创建窗口 ----
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, app::wnd_proc, 0L, 0L,

@@ -159,6 +159,7 @@ void render_gui() {
                 if (loop_ms < 1) loop_ms = 1;
                 if (loop_ms > 60000) loop_ms = 60000;
                 param_loop_speed_ms.store(loop_ms);
+                add_log(u8"[参数] 循环速度 → " + std::to_string(loop_ms) + " ms", LogLevel::BEHAVIOR);
             }
             ImGui::TextDisabled(u8"  每次点击之间的基础间隔时间");
             ImGui::Dummy(ImVec2(0, 4));
@@ -168,6 +169,7 @@ void render_gui() {
                 if (jitter < 0) jitter = 0;
                 if (jitter > 5000) jitter = 5000;
                 param_jitter_ms.store(jitter);
+                add_log(u8"[参数] 随机延迟 → " + std::to_string(jitter) + " ms", LogLevel::BEHAVIOR);
             }
             ImGui::TextDisabled(u8"  每次循环额外加上 0~该值 的随机抖动");
             ImGui::Dummy(ImVec2(0, 8));
@@ -182,6 +184,7 @@ void render_gui() {
                 if (press_base < 1)     press_base = 1;
                 if (press_base > 60000) press_base = 60000;
                 param_press_base_ms.store(press_base);
+                add_log(u8"[参数] 按下时长 → " + std::to_string(press_base) + " ms", LogLevel::BEHAVIOR);
             }
             ImGui::TextDisabled(u8"  左键按下后持续时间的基础值");
 
@@ -190,6 +193,7 @@ void render_gui() {
                 if (press_jitter < 0)     press_jitter = 0;
                 if (press_jitter > 60000) press_jitter = 60000;
                 param_press_jitter_ms.store(press_jitter);
+                add_log(u8"[参数] 按下随机延迟 → " + std::to_string(press_jitter) + " ms", LogLevel::BEHAVIOR);
             }
             ImGui::TextDisabled(u8"  在基础值上额外加 0~该值 的随机抖动");
             ImGui::Dummy(ImVec2(0, 8));
@@ -204,6 +208,7 @@ void render_gui() {
                 if (per_rest < 0) per_rest = 0;
                 if (per_rest > 100000) per_rest = 100000;
                 param_clicks_per_rest.store(per_rest);
+                add_log(u8"[参数] 每轮点击数 → " + std::to_string(per_rest), LogLevel::BEHAVIOR);
             }
             ImGui::TextDisabled(u8"  设为 0 表示不休息,持续点击");
 
@@ -212,6 +217,7 @@ void render_gui() {
                 if (rest_s < 1) rest_s = 1;
                 if (rest_s > 3600) rest_s = 3600;
                 param_rest_seconds.store(rest_s);
+                add_log(u8"[参数] 休息时长 → " + std::to_string(rest_s) + " s", LogLevel::BEHAVIOR);
             }
 
             ImGui::EndTabItem();
@@ -219,20 +225,49 @@ void render_gui() {
 
         if (ImGui::BeginTabItem(u8"日志")) {
             g_active_tab = 1;
-            ImGui::Dummy(ImVec2(0, 6));
-            if (ImGui::Button(u8"清空日志")) {
+
+            // 过滤 + 清空，单行紧凑布局，无额外 padding
+            static bool show_info     = true;
+            static bool show_behavior = true;
+            static bool show_warn     = true;
+            static bool show_err      = true;
+            ImGui::Checkbox("INFO",   &show_info);     ImGui::SameLine();
+            ImGui::Checkbox(u8"行为", &show_behavior); ImGui::SameLine();
+            ImGui::Checkbox("WARN",   &show_warn);     ImGui::SameLine();
+            ImGui::Checkbox("ERROR",  &show_err);      ImGui::SameLine();
+            // 把清空按钮推到最右侧
+            float clear_w = ImGui::CalcTextSize(u8"清空").x + ImGui::GetStyle().FramePadding.x * 2;
+            ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - clear_w);
+            if (ImGui::Button(u8"清空")) {
                 std::lock_guard<std::mutex> g(g_log_mutex);
                 g_log_lines.clear();
             }
-            ImGui::SameLine();
-            ImGui::TextDisabled(u8"  (功能开发中,当前展示运行日志)");
             ImGui::Separator();
 
             ImGui::BeginChild("##log_scroll", ImVec2(0, 0), true);
             {
                 std::lock_guard<std::mutex> g(g_log_mutex);
-                for (const auto& line : g_log_lines) {
-                    ImGui::TextUnformatted(line.c_str());
+                for (const auto& entry : g_log_lines) {
+                    switch (entry.level) {
+                        case LogLevel::INFO:
+                            if (!show_info) continue;
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
+                            break;
+                        case LogLevel::BEHAVIOR:
+                            if (!show_behavior) continue;
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.50f, 0.90f, 1.0f));
+                            break;
+                        case LogLevel::WARN:
+                            if (!show_warn) continue;
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.60f, 0.10f, 1.0f));
+                            break;
+                        case LogLevel::ERR:
+                            if (!show_err) continue;
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.20f, 0.20f, 1.0f));
+                            break;
+                    }
+                    ImGui::TextUnformatted(entry.text.c_str());
+                    ImGui::PopStyleColor();
                 }
                 if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                     ImGui::SetScrollHereY(1.0f);
@@ -276,10 +311,10 @@ void render_gui() {
         if (ImGui::Button(u8"开始", btn_size)) {
             if (active_mouse_id.load() == 0) {
                 active_mouse_id.store(INTERCEPTION_MOUSE(0));
-                add_log("未检测到活跃鼠标,默认使用 MOUSE(0)");
+                add_log(u8"未检测到活跃鼠标,默认使用 MOUSE(0)", LogLevel::WARN);
             }
             is_macro_running.store(true);
-            add_log("[GUI] 开始");
+            add_log(u8"[GUI] 开始", LogLevel::BEHAVIOR);
         }
         ImGui::EndDisabled();
         ImGui::PopStyleColor(3);
@@ -293,7 +328,7 @@ void render_gui() {
         ImGui::BeginDisabled(!running);
         if (ImGui::Button(u8"停止", btn_size)) {
             is_macro_running.store(false);
-            add_log("[GUI] 停止");
+            add_log(u8"[GUI] 停止", LogLevel::BEHAVIOR);
         }
         ImGui::EndDisabled();
         ImGui::PopStyleColor(3);
