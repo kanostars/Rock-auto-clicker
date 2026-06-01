@@ -488,10 +488,144 @@ void render_gui() {
         if (ImGui::BeginTabItem(u8"测试")) {
             g_active_tab = 3;
             ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextUnformatted(u8"按键测试 (开发中)");
+
+            // ---- 应用状态检测 ----
+            ImGui::TextUnformatted(u8"应用状态");
             ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextDisabled(u8"  在设置页可自定义触发按键组合。");
+            ImGui::Dummy(ImVec2(0, 6));
+
+            struct Check { const char* label; bool ok; };
+            Check checks[] = {
+                { u8"Interception 上下文", g_context != nullptr },
+                { u8"活跃鼠标已识别",      active_mouse_id.load() != 0 },
+                { u8"热键已配置",          [&]{
+                    HotkeyConfig hk;
+                    { std::lock_guard<std::mutex> lk(g_hotkey_mutex); hk = g_hotkey; }
+                    bool has_vkey = false;
+                    for (uint8_t vk : hk.vkeys) if (vk) { has_vkey = true; break; }
+                    return hk.mouse_btn3 || hk.mouse_btn4 || hk.mouse_btn5 ||
+                           hk.key_ctrl  || hk.key_shift   || hk.key_alt    || has_vkey;
+                }() },
+            };
+
+            ImGui::Indent(8.0f);
+            for (const auto& c : checks) {
+                // 彩色圆灯
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                float r = 6.0f;
+                ImU32 col = c.ok ? IM_COL32(40, 180, 70, 255) : IM_COL32(210, 50, 50, 255);
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(p.x + r, p.y + ImGui::GetTextLineHeight() * 0.5f), r, col);
+                ImGui::SetCursorScreenPos(ImVec2(p.x + r * 2 + 8, p.y));
+                if (c.ok) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.15f, 0.55f, 0.25f, 1.0f));
+                    ImGui::Text(u8"%s  ✓", c.label);
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.75f, 0.15f, 0.15f, 1.0f));
+                    ImGui::Text(u8"%s  ✗", c.label);
+                }
+                ImGui::PopStyleColor();
+            }
+            ImGui::Unindent(8.0f);
+
+            ImGui::Dummy(ImVec2(0, 12));
+
+            // ---- 按键激活检测 ----
+            ImGui::TextUnformatted(u8"按键激活检测");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 6));
+
+            static bool key_scanning = false;
+
+            if (!key_scanning) {
+                if (ImGui::Button(u8"开始检测")) key_scanning = true;
+                ImGui::TextDisabled(u8"  点击后实时显示当前按下的按键");
+            } else {
+                if (ImGui::Button(u8"停止检测")) key_scanning = false;
+            }
+
+            if (key_scanning) {
+                ImGui::Dummy(ImVec2(0, 6));
+
+                // 收集当前所有按下的键名
+                std::vector<std::string> active_keys;
+
+                // 鼠标键
+                if (GetAsyncKeyState(VK_LBUTTON)  & 0x8000) active_keys.push_back(u8"左键");
+                if (GetAsyncKeyState(VK_RBUTTON)  & 0x8000) active_keys.push_back(u8"右键");
+                if (GetAsyncKeyState(VK_MBUTTON)  & 0x8000) active_keys.push_back(u8"中键");
+                if (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) active_keys.push_back("Button4");
+                if (GetAsyncKeyState(VK_XBUTTON2) & 0x8000) active_keys.push_back("Button5");
+
+                // 修饰键
+                if (GetAsyncKeyState(VK_CONTROL) & 0x8000) active_keys.push_back("Ctrl");
+                if (GetAsyncKeyState(VK_SHIFT)   & 0x8000) active_keys.push_back("Shift");
+                if (GetAsyncKeyState(VK_MENU)    & 0x8000) active_keys.push_back("Alt");
+
+                // 常用功能键
+                if (GetAsyncKeyState(VK_RETURN) & 0x8000) active_keys.push_back("Enter");
+                if (GetAsyncKeyState(VK_SPACE)  & 0x8000) active_keys.push_back("Space");
+                if (GetAsyncKeyState(VK_TAB)    & 0x8000) active_keys.push_back("Tab");
+                if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) active_keys.push_back("Esc");
+                if (GetAsyncKeyState(VK_BACK)   & 0x8000) active_keys.push_back("Backspace");
+                if (GetAsyncKeyState(VK_DELETE) & 0x8000) active_keys.push_back("Delete");
+                if (GetAsyncKeyState(VK_INSERT) & 0x8000) active_keys.push_back("Insert");
+                if (GetAsyncKeyState(VK_HOME)   & 0x8000) active_keys.push_back("Home");
+                if (GetAsyncKeyState(VK_END)    & 0x8000) active_keys.push_back("End");
+                if (GetAsyncKeyState(VK_PRIOR)  & 0x8000) active_keys.push_back("PgUp");
+                if (GetAsyncKeyState(VK_NEXT)   & 0x8000) active_keys.push_back("PgDn");
+                if (GetAsyncKeyState(VK_UP)     & 0x8000) active_keys.push_back(u8"↑");
+                if (GetAsyncKeyState(VK_DOWN)   & 0x8000) active_keys.push_back(u8"↓");
+                if (GetAsyncKeyState(VK_LEFT)   & 0x8000) active_keys.push_back(u8"←");
+                if (GetAsyncKeyState(VK_RIGHT)  & 0x8000) active_keys.push_back(u8"→");
+
+                // F 键
+                for (int vk = VK_F1; vk <= VK_F24; ++vk) {
+                    if (GetAsyncKeyState(vk) & 0x8000) {
+                        char buf[8]; snprintf(buf, sizeof(buf), "F%d", vk - VK_F1 + 1);
+                        active_keys.push_back(buf);
+                    }
+                }
+
+                // 数字行 + 字母
+                for (int vk = '0'; vk <= 'Z'; ++vk) {
+                    if (GetAsyncKeyState(vk) & 0x8000) {
+                        char buf[2] = { (char)vk, 0 };
+                        active_keys.push_back(buf);
+                    }
+                }
+
+                // 小键盘
+                static const struct { int vk; const char* name; } numpad[] = {
+                    {VK_NUMPAD0,"Num0"},{VK_NUMPAD1,"Num1"},{VK_NUMPAD2,"Num2"},
+                    {VK_NUMPAD3,"Num3"},{VK_NUMPAD4,"Num4"},{VK_NUMPAD5,"Num5"},
+                    {VK_NUMPAD6,"Num6"},{VK_NUMPAD7,"Num7"},{VK_NUMPAD8,"Num8"},
+                    {VK_NUMPAD9,"Num9"},{VK_MULTIPLY,"Num*"},{VK_ADD,"Num+"},
+                    {VK_SUBTRACT,"Num-"},{VK_DECIMAL,"Num."},{VK_DIVIDE,"Num/"},
+                    {VK_RETURN /* numpad enter handled via VK_RETURN above */,nullptr},
+                };
+                for (const auto& n : numpad) {
+                    if (n.name && (GetAsyncKeyState(n.vk) & 0x8000))
+                        active_keys.push_back(n.name);
+                }
+
+                // 显示在子窗口标签框里
+                ImGui::BeginChild("##key_display", ImVec2(0, 80), true);
+                if (active_keys.empty()) {
+                    ImGui::TextDisabled(u8"  （无按键按下）");
+                } else {
+                    std::string line;
+                    for (size_t i = 0; i < active_keys.size(); ++i) {
+                        if (i > 0) line += "  ";
+                        line += active_keys[i];
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.20f, 0.50f, 0.90f, 1.0f));
+                    ImGui::TextWrapped("%s", line.c_str());
+                    ImGui::PopStyleColor();
+                }
+                ImGui::EndChild();
+            }
+
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
