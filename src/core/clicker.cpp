@@ -6,6 +6,9 @@
 #include <string>
 #include <thread>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 namespace app {
 
 [[noreturn]] void macro_worker() {
@@ -112,16 +115,78 @@ namespace app {
             // 任何鼠标动作都更新当前活跃鼠标,便于 GUI 按钮在没按过侧键时也能工作
             active_mouse_id.store(device);
 
-            if (mouse_stroke.state & INTERCEPTION_MOUSE_BUTTON_4_DOWN) {
-                bool now = !is_macro_running.load();
-                is_macro_running.store(now);
-                add_log(std::string("[侧键] 切换 -> ") + (now ? "开启" : "关闭"), LogLevel::BEHAVIOR);
-                continue; // 吞掉这次按下
+            if (!g_hotkey_recording.load() &&
+                (mouse_stroke.state & (INTERCEPTION_MOUSE_BUTTON_3_DOWN |
+                                       INTERCEPTION_MOUSE_BUTTON_4_DOWN |
+                                       INTERCEPTION_MOUSE_BUTTON_5_DOWN))) {
+                // 快照热键配置
+                HotkeyConfig hk;
+                { std::lock_guard<std::mutex> lk(g_hotkey_mutex); hk = g_hotkey; }
+
+                bool mouse_hit = false;
+                if (hk.mouse_btn3 && (mouse_stroke.state & INTERCEPTION_MOUSE_BUTTON_3_DOWN)) mouse_hit = true;
+                if (hk.mouse_btn4 && (mouse_stroke.state & INTERCEPTION_MOUSE_BUTTON_4_DOWN)) mouse_hit = true;
+                if (hk.mouse_btn5 && (mouse_stroke.state & INTERCEPTION_MOUSE_BUTTON_5_DOWN)) mouse_hit = true;
+
+                if (mouse_hit) {
+                    bool kb_ok = true;
+                    if (hk.key_ctrl  && !(GetAsyncKeyState(VK_CONTROL) & 0x8000)) kb_ok = false;
+                    if (hk.key_shift && !(GetAsyncKeyState(VK_SHIFT)   & 0x8000)) kb_ok = false;
+                    if (hk.key_alt   && !(GetAsyncKeyState(VK_MENU)    & 0x8000)) kb_ok = false;
+                    for (uint8_t vk : hk.vkeys) {
+                        if (vk != 0 && !(GetAsyncKeyState(vk) & 0x8000)) { kb_ok = false; break; }
+                    }
+
+                    if (kb_ok) {
+                        bool now = !is_macro_running.load();
+                        is_macro_running.store(now);
+                        add_log(std::string("[热键] 切换 -> ") + (now ? "开启" : "关闭"), LogLevel::BEHAVIOR);
+                        continue; // 吞掉此次按下
+                    }
+                }
             }
         }
         interception_send(g_context, device, &stroke, 1);
     }
-    // 不会到达
+}
+
+[[noreturn]] void hotkey_poller() {
+    // 轮询处理纯键盘（或无鼠标侧键）组合
+    // 鼠标侧键由 interception_thread 负责，此线程仅在组合不含鼠标侧键时生效
+    bool was_active = false;
+
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        if (g_hotkey_recording.load()) { was_active = false; continue; }
+
+        HotkeyConfig hk;
+        { std::lock_guard<std::mutex> lk(g_hotkey_mutex); hk = g_hotkey; }
+
+        // 若热键含鼠标侧键，由 interception_thread 处理，跳过
+        if (hk.mouse_btn3 || hk.mouse_btn4 || hk.mouse_btn5) { was_active = false; continue; }
+
+        // 纯键盘组合：必须至少有一个键
+        bool has_kb = hk.key_ctrl || hk.key_shift || hk.key_alt;
+        for (uint8_t vk : hk.vkeys) if (vk) has_kb = true;
+        if (!has_kb) { was_active = false; continue; }
+
+        bool all_down = true;
+        if (hk.key_ctrl  && !(GetAsyncKeyState(VK_CONTROL) & 0x8000)) all_down = false;
+        if (hk.key_shift && !(GetAsyncKeyState(VK_SHIFT)   & 0x8000)) all_down = false;
+        if (hk.key_alt   && !(GetAsyncKeyState(VK_MENU)    & 0x8000)) all_down = false;
+        for (uint8_t vk : hk.vkeys) {
+            if (vk != 0 && !(GetAsyncKeyState(vk) & 0x8000)) { all_down = false; break; }
+        }
+
+        // 上升沿触发
+        if (all_down && !was_active) {
+            bool now = !is_macro_running.load();
+            is_macro_running.store(now);
+            add_log(std::string("[热键] 切换 -> ") + (now ? "开启" : "关闭"), LogLevel::BEHAVIOR);
+        }
+        was_active = all_down;
+    }
 }
 
 } // namespace app

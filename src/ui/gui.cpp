@@ -5,6 +5,9 @@
 #include <mutex>
 #include <string>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include "imgui.h"
 
 namespace app {
@@ -150,7 +153,32 @@ void render_gui() {
         if (ImGui::BeginTabItem(u8"首页")) {
             g_active_tab = 0;
             ImGui::Dummy(ImVec2(0, 8));
+
+            // "点击参数设置" 标题 + 右侧预设按钮同行
             ImGui::TextUnformatted(u8"点击参数设置");
+            ImGui::SameLine();
+            {
+                // 两个小按钮右对齐
+                const float btn_w = 48.0f;
+                const float spacing = ImGui::GetStyle().ItemSpacing.x;
+                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btn_w * 2 - spacing);
+
+                auto apply_preset = [](int loop, int jitter, int press_base, int press_jitter,
+                                       const char* name) {
+                    param_loop_speed_ms  .store(loop);
+                    param_jitter_ms      .store(jitter);
+                    param_press_base_ms  .store(press_base);
+                    param_press_jitter_ms.store(press_jitter);
+                    add_log(std::string(u8"[预设] 切换至 ") + name, LogLevel::BEHAVIOR);
+                };
+
+                if (ImGui::SmallButton(u8"默认"))
+                    apply_preset(200, 20, 200, 10, u8"默认");
+                ImGui::SameLine();
+                if (ImGui::SmallButton(u8"点射"))
+                    apply_preset(350, 20, 30, 10, u8"点射");
+            }
+
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 6));
 
@@ -277,17 +305,193 @@ void render_gui() {
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem(u8"测试")) {
+        if (ImGui::BeginTabItem(u8"设置")) {
             g_active_tab = 2;
+            ImGui::Dummy(ImVec2(0, 8));
+            ImGui::TextUnformatted(u8"触发按键配置");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 10));
+
+            // 键码 → 可读名称
+            auto vkey_name = [](uint8_t vk, char* buf, int bufsz) {
+                if (vk >= VK_F1  && vk <= VK_F24) { snprintf(buf, bufsz, "F%d", vk - VK_F1 + 1); return; }
+                if (vk >= '0'    && vk <= '9')    { buf[0] = (char)vk; buf[1] = 0; return; }
+                if (vk >= 'A'    && vk <= 'Z')    { buf[0] = (char)vk; buf[1] = 0; return; }
+                if (vk == VK_TAB)   { snprintf(buf, bufsz, "Tab");   return; }
+                if (vk == VK_SPACE) { snprintf(buf, bufsz, "Space"); return; }
+                snprintf(buf, bufsz, "VK 0x%02X", vk);
+            };
+
+            // 当前热键快照
+            HotkeyConfig hk;
+            { std::lock_guard<std::mutex> lk(g_hotkey_mutex); hk = g_hotkey; }
+
+            // 组合描述字符串（用 parts 列表拼接，避免尾部 " + "）
+            auto combo_str = [&]() -> std::string {
+                std::vector<std::string> parts;
+                if (hk.key_ctrl)  parts.push_back("Ctrl");
+                if (hk.key_shift) parts.push_back("Shift");
+                if (hk.key_alt)   parts.push_back("Alt");
+                for (uint8_t vk : hk.vkeys) {
+                    if (vk == 0) break;
+                    char nb[16]; vkey_name(vk, nb, sizeof(nb));
+                    parts.push_back(nb);
+                }
+                if (hk.mouse_btn3) parts.push_back(u8"中键");
+                if (hk.mouse_btn4) parts.push_back("Button4");
+                if (hk.mouse_btn5) parts.push_back("Button5");
+                if (parts.empty()) return u8"（未设置）";
+                std::string s;
+                for (size_t i = 0; i < parts.size(); ++i) {
+                    if (i > 0) s += " + ";
+                    s += parts[i];
+                }
+                return s;
+            };
+
+            // 录制状态机
+            enum class RecState { IDLE, WAITING, HOLDING, DONE };
+            static RecState rec_state = RecState::IDLE;
+            static HotkeyConfig rec_buf{};  // 录制过程中积累的组合
+
+            // 扫描工具：返回当前按住的 HotkeyConfig（收集所有按下的键）
+            auto scan_keys = []() -> HotkeyConfig {
+                HotkeyConfig h{};
+                h.mouse_btn3 = (GetAsyncKeyState(VK_MBUTTON)  & 0x8000) != 0;
+                h.mouse_btn4 = (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) != 0;
+                h.mouse_btn5 = (GetAsyncKeyState(VK_XBUTTON2) & 0x8000) != 0;
+                h.key_ctrl   = (GetAsyncKeyState(VK_CONTROL)  & 0x8000) != 0;
+                h.key_shift  = (GetAsyncKeyState(VK_SHIFT)    & 0x8000) != 0;
+                h.key_alt    = (GetAsyncKeyState(VK_MENU)     & 0x8000) != 0;
+                // 收集所有按下的非修饰键（最多 4 个）
+                static const int candidates[] = {
+                    VK_TAB, VK_SPACE,
+                    VK_F1,VK_F2,VK_F3,VK_F4,VK_F5,VK_F6,
+                    VK_F7,VK_F8,VK_F9,VK_F10,VK_F11,VK_F12,
+                    VK_F13,VK_F14,VK_F15,VK_F16,VK_F17,VK_F18,
+                    VK_F19,VK_F20,VK_F21,VK_F22,VK_F23,VK_F24,
+                };
+                int idx = 0;
+                for (int vk : candidates) {
+                    if (idx >= 4) break;
+                    if (GetAsyncKeyState(vk) & 0x8000) h.vkeys[idx++] = static_cast<uint8_t>(vk);
+                }
+                for (int vk = '0'; vk <= 'Z' && idx < 4; ++vk) {
+                    if (GetAsyncKeyState(vk) & 0x8000) h.vkeys[idx++] = static_cast<uint8_t>(vk);
+                }
+                return h;
+            };
+
+            auto has_any = [](const HotkeyConfig& h) {
+                bool has_vkey = false;
+                for (uint8_t vk : h.vkeys) if (vk) { has_vkey = true; break; }
+                return h.mouse_btn3 || h.mouse_btn4 || h.mouse_btn5 ||
+                       h.key_ctrl  || h.key_shift   || h.key_alt    || has_vkey;
+            };
+
+            switch (rec_state) {
+            case RecState::IDLE:
+                ImGui::Text(u8"当前触发键: %s", combo_str().c_str());
+                ImGui::Dummy(ImVec2(0, 8));
+                if (ImGui::Button(u8"  录制新组合  ")) {
+                    rec_buf = {};
+                    g_hotkey_recording.store(true);
+                    rec_state = RecState::WAITING;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(u8"恢复默认")) {
+                    HotkeyConfig def{};  // 默认：仅中键
+                    { std::lock_guard<std::mutex> lk(g_hotkey_mutex); g_hotkey = def; }
+                    add_log(u8"[设置] 触发键已恢复默认（中键）", LogLevel::BEHAVIOR);
+                }
+                break;
+
+            case RecState::WAITING:
+                ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.1f, 1.0f),
+                                   u8"请按住目标组合键…");
+                ImGui::Dummy(ImVec2(0, 4));
+                if (ImGui::SmallButton(u8"取消")) {
+                    g_hotkey_recording.store(false);
+                    rec_state = RecState::IDLE;
+                }
+                {
+                    HotkeyConfig cur = scan_keys();
+                    if (has_any(cur)) {
+                        rec_buf = cur;
+                        rec_state = RecState::HOLDING;
+                    }
+                }
+                break;
+
+            case RecState::HOLDING: {
+                HotkeyConfig cur = scan_keys();
+                if (has_any(cur)) {
+                    if (cur.mouse_btn3) rec_buf.mouse_btn3 = true;
+                    if (cur.mouse_btn4) rec_buf.mouse_btn4 = true;
+                    if (cur.mouse_btn5) rec_buf.mouse_btn5 = true;
+                    if (cur.key_ctrl)   rec_buf.key_ctrl   = true;
+                    if (cur.key_shift)  rec_buf.key_shift  = true;
+                    if (cur.key_alt)    rec_buf.key_alt    = true;
+                    // 合并新出现的 vkeys
+                    for (uint8_t vk : cur.vkeys) {
+                        if (vk == 0) break;
+                        bool found = false;
+                        for (uint8_t rv : rec_buf.vkeys) if (rv == vk) { found = true; break; }
+                        if (!found) {
+                            for (uint8_t& rv : rec_buf.vkeys) { if (rv == 0) { rv = vk; break; } }
+                        }
+                    }
+                }
+
+                // 预览（同样用 parts 列表）
+                std::vector<std::string> parts;
+                if (rec_buf.key_ctrl)  parts.push_back("Ctrl");
+                if (rec_buf.key_shift) parts.push_back("Shift");
+                if (rec_buf.key_alt)   parts.push_back("Alt");
+                for (uint8_t vk : rec_buf.vkeys) {
+                    if (vk == 0) break;
+                    char nb[16]; vkey_name(vk, nb, sizeof(nb));
+                    parts.push_back(nb);
+                }
+                if (rec_buf.mouse_btn3) parts.push_back(u8"中键");
+                if (rec_buf.mouse_btn4) parts.push_back("Button4");
+                if (rec_buf.mouse_btn5) parts.push_back("Button5");
+                std::string preview;
+                for (size_t i = 0; i < parts.size(); ++i) {
+                    if (i > 0) preview += " + ";
+                    preview += parts[i];
+                }
+
+                ImGui::TextColored(ImVec4(0.2f, 0.7f, 0.3f, 1.0f),
+                                   u8"检测到: %s", preview.c_str());
+                ImGui::TextDisabled(u8"  松开所有按键即确认");
+                ImGui::Dummy(ImVec2(0, 4));
+                if (ImGui::SmallButton(u8"取消")) {
+                    g_hotkey_recording.store(false);
+                    rec_state = RecState::IDLE;
+                }
+
+                if (!has_any(cur)) {
+                    { std::lock_guard<std::mutex> lk(g_hotkey_mutex); g_hotkey = rec_buf; }
+                    add_log(std::string(u8"[设置] 触发键已更新 → ") + preview, LogLevel::BEHAVIOR);
+                    g_hotkey_recording.store(false);
+                    rec_state = RecState::IDLE;
+                }
+                break;
+            }
+            default: rec_state = RecState::IDLE; break;
+            }
+
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem(u8"测试")) {
+            g_active_tab = 3;
             ImGui::Dummy(ImVec2(0, 8));
             ImGui::TextUnformatted(u8"按键测试 (开发中)");
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8));
-            ImGui::TextUnformatted(u8"当前触发键: 鼠标右后侧键 (Button 4 / XBUTTON1)");
-            ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextDisabled(u8"  按下该键可切换连点器开关。");
-            ImGui::Dummy(ImVec2(0, 12));
-            ImGui::TextDisabled(u8"自定义按键映射功能将在后续版本提供。");
+            ImGui::TextDisabled(u8"  在设置页可自定义触发按键组合。");
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

@@ -32,6 +32,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // ---- 启动后台线程 ----
     std::thread(app::macro_worker).detach();
     std::thread(app::interception_thread).detach();
+    std::thread(app::hotkey_poller).detach();
     app::add_log("连点器 v1.1 已启动", app::LogLevel::INFO);
 
     // ---- 创建窗口 ----

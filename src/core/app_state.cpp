@@ -20,6 +20,10 @@ std::atomic<unsigned long long> total_click_count{0};
 std::atomic<unsigned long long> total_run_ms{0};
 std::atomic<long long>          run_start_ms_epoch{0};
 
+HotkeyConfig             g_hotkey;
+std::mutex               g_hotkey_mutex;
+std::atomic<bool>        g_hotkey_recording{false};
+
 std::mutex               g_log_mutex;
 std::vector<LogEntry>    g_log_lines;
 
