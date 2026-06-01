@@ -33,10 +33,11 @@ include_directories(
 
 # 4. 应用源码(按职责拆分)
 set(APP_SOURCES
-        src/app_state.cpp
-        src/clicker.cpp
-        src/gui.cpp
-        src/d3d_window.cpp
+        src/core/app_state.cpp
+        src/core/clicker.cpp
+        src/ui/gui.cpp
+        src/platform/config.cpp
+        src/platform/d3d_window.cpp
 )
 
 # WIN32 -> 不显示控制台窗口

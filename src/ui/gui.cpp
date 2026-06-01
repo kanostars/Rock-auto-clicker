@@ -1,6 +1,7 @@
 #include "gui.h"
-#include "app_state.h"
+#include "core/app_state.h"
 
+#include <chrono>
 #include <mutex>
 #include <string>
 
@@ -9,6 +10,30 @@
 namespace app {
 
 static int g_active_tab = 0; // 0=首页 1=日志 2=测试
+
+// 把毫秒格式化成 HH:MM:SS
+static std::string format_hms(unsigned long long ms) {
+    unsigned long long s = ms / 1000;
+    unsigned long long h = s / 3600;
+    unsigned long long m = (s / 60) % 60;
+    unsigned long long sec = s % 60;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02llu:%02llu:%02llu", h, m, sec);
+    return buf;
+}
+
+// 当前累计运行毫秒(含正在运行的本段)
+static unsigned long long current_run_ms() {
+    unsigned long long total = total_run_ms.load();
+    long long start = run_start_ms_epoch.load();
+    if (start > 0) {
+        long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+        if (now > start) total += static_cast<unsigned long long>(now - start);
+    }
+    return total;
+}
 
 void render_gui() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -31,7 +56,8 @@ void render_gui() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 p0 = ImGui::GetCursorScreenPos();
         float header_h = 60.0f;
-        ImVec2 p1 = ImVec2(p0.x + ImGui::GetContentRegionAvail().x, p0.y + header_h);
+        float region_w = ImGui::GetContentRegionAvail().x;
+        ImVec2 p1 = ImVec2(p0.x + region_w, p0.y + header_h);
         dl->AddRectFilled(p0, p1, IM_COL32(35, 90, 160, 255));
 
         float cx = p0.x + 30, cy = p0.y + header_h * 0.5f;
@@ -41,11 +67,77 @@ void render_gui() {
         ImGui::SetCursorScreenPos(ImVec2(p0.x + 60, p0.y + 18));
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
         ImGui::SetWindowFontScale(1.4f);
-        ImGui::TextUnformatted(u8"北辰连点器 v1.0");
+        ImGui::TextUnformatted(u8"连点器 v1.1");
         ImGui::SetWindowFontScale(1.0f);
         ImGui::PopStyleColor();
 
+        // 右上角:本次运行时长(不含暂停)
+        {
+            std::string elapsed = format_hms(current_run_ms());
+            std::string label = std::string(u8"运行 ") + elapsed;
+            ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+            float pad = 12.0f;
+            dl->AddText(ImVec2(p1.x - ts.x - pad, p0.y + (header_h - ts.y) * 0.5f),
+                        IM_COL32(255, 255, 255, 235), label.c_str());
+        }
+
         ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + header_h + 6));
+    }
+
+    // ---- 统计条(logo 与标签页之间, 醒目展示累计点击 + 活跃鼠标 ID) ----
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p0 = ImGui::GetCursorScreenPos();
+        float region_w = ImGui::GetContentRegionAvail().x;
+        float bar_h = 56.0f;
+        ImVec2 p1 = ImVec2(p0.x + region_w, p0.y + bar_h);
+        dl->AddRectFilled(p0, p1, IM_COL32(245, 248, 252, 255));
+        dl->AddRect(p0, p1, IM_COL32(210, 220, 232, 255));
+        float mid_x = p0.x + region_w * 0.5f;
+        dl->AddLine(ImVec2(mid_x, p0.y + 8), ImVec2(mid_x, p1.y - 8),
+                    IM_COL32(210, 220, 232, 255));
+
+        const InterceptionDevice mid = active_mouse_id.load();
+
+        // 左格:累计点击
+        {
+            std::string num = std::to_string(total_click_count.load());
+            ImGui::SetCursorScreenPos(ImVec2(p0.x + 12, p0.y + 6));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(110, 120, 135, 255));
+            ImGui::TextUnformatted(u8"累计点击");
+            ImGui::PopStyleColor();
+            ImGui::SetCursorScreenPos(ImVec2(p0.x + 12, p0.y + 24));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(35, 90, 160, 255));
+            ImGui::SetWindowFontScale(1.5f);
+            ImGui::TextUnformatted(num.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleColor();
+        }
+
+        // 右格:活跃鼠标 ID
+        {
+            ImGui::SetCursorScreenPos(ImVec2(mid_x + 12, p0.y + 6));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(110, 120, 135, 255));
+            ImGui::TextUnformatted(u8"活跃鼠标");
+            ImGui::PopStyleColor();
+
+            ImGui::SetCursorScreenPos(ImVec2(mid_x + 12, p0.y + 24));
+            if (mid == 0) {
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 80, 80, 255));
+                ImGui::SetWindowFontScale(1.1f);
+                ImGui::TextUnformatted(u8"请先动一下鼠标");
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(35, 90, 160, 255));
+                ImGui::SetWindowFontScale(1.5f);
+                ImGui::Text("ID %d", (int)mid);
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::PopStyleColor();
+            }
+        }
+
+        ImGui::SetCursorScreenPos(ImVec2(p0.x, p1.y + 6));
     }
 
     const float bottom_h = 56.0f;
@@ -87,16 +179,16 @@ void render_gui() {
 
             int press_base = param_press_base_ms.load();
             if (ImGui::InputInt(u8"按下时长 (毫秒)", &press_base, 1, 5)) {
-                if (press_base < 1)   press_base = 1;
-                if (press_base > 500) press_base = 500;
+                if (press_base < 1)     press_base = 1;
+                if (press_base > 60000) press_base = 60000;
                 param_press_base_ms.store(press_base);
             }
             ImGui::TextDisabled(u8"  左键按下后持续时间的基础值");
 
             int press_jitter = param_press_jitter_ms.load();
             if (ImGui::InputInt(u8"按下随机延迟 (毫秒)", &press_jitter, 1, 5)) {
-                if (press_jitter < 0)   press_jitter = 0;
-                if (press_jitter > 500) press_jitter = 500;
+                if (press_jitter < 0)     press_jitter = 0;
+                if (press_jitter > 60000) press_jitter = 60000;
                 param_press_jitter_ms.store(press_jitter);
             }
             ImGui::TextDisabled(u8"  在基础值上额外加 0~该值 的随机抖动");
@@ -121,13 +213,6 @@ void render_gui() {
                 if (rest_s > 3600) rest_s = 3600;
                 param_rest_seconds.store(rest_s);
             }
-
-            ImGui::Dummy(ImVec2(0, 10));
-            ImGui::Separator();
-            ImGui::Text(u8"累计点击: %llu 次", total_click_count.load());
-            ImGui::Text(u8"活跃鼠标 ID: %d %s",
-                        (int)active_mouse_id.load(),
-                        active_mouse_id.load() == 0 ? u8"(请先动一下鼠标)" : "");
 
             ImGui::EndTabItem();
         }

@@ -16,6 +16,8 @@ std::atomic<int> param_clicks_per_rest{0};
 std::atomic<int> param_rest_seconds{3};
 
 std::atomic<unsigned long long> total_click_count{0};
+std::atomic<unsigned long long> total_run_ms{0};
+std::atomic<long long>          run_start_ms_epoch{0};
 
 std::mutex                g_log_mutex;
 std::vector<std::string>  g_log_lines;

@@ -7,10 +7,11 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 
-#include "app_state.h"
-#include "clicker.h"
-#include "d3d_window.h"
-#include "gui.h"
+#include "core/app_state.h"
+#include "core/clicker.h"
+#include "platform/config.h"
+#include "platform/d3d_window.h"
+#include "ui/gui.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // ---- Interception 初始化 ----
@@ -21,22 +22,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
                     L"1. 已通过 install-interception.exe /install 安装内核驱动\n"
                     L"2. 系统已重启\n"
                     L"3. 程序以管理员身份运行",
-                    L"北辰连点器 - 启动失败", MB_ICONERROR);
+                    L"连点器 - 启动失败", MB_ICONERROR);
         return 1;
     }
     interception_set_filter(app::g_context, interception_is_mouse, INTERCEPTION_FILTER_MOUSE_ALL);
 
+    app::load_config();
+
     // ---- 启动后台线程 ----
     std::thread(app::macro_worker).detach();
     std::thread(app::interception_thread).detach();
-    app::add_log("北辰连点器 v1.0 已启动");
+    app::add_log("连点器 v1.1 已启动");
 
     // ---- 创建窗口 ----
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, app::wnd_proc, 0L, 0L,
                        hInstance, nullptr, nullptr, nullptr, nullptr,
                        L"BeiChenClicker", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"北辰连点器 v1.0",
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"连点器 v1.1",
                               WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
                               100, 100, 460, 600,
                               nullptr, nullptr, wc.hInstance, nullptr);
@@ -114,6 +117,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         app::d3d_swap_chain()->Present(1, 0);
     }
+
+    app::save_config();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

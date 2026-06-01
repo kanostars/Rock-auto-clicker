@@ -24,6 +24,12 @@ namespace app {
     int clicks_this_round = 0;
     bool was_running = false;
 
+    auto now_ms = []() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
     while (true) {
         const bool running = is_macro_running.load();
         const InterceptionDevice mouse = active_mouse_id.load();
@@ -33,6 +39,7 @@ namespace app {
                 add_log("连点循环已开启");
                 was_running = true;
                 clicks_this_round = 0;
+                run_start_ms_epoch.store(now_ms());
             }
 
             // 1. 微小手抖
@@ -80,6 +87,12 @@ namespace app {
             }
         } else {
             if (was_running) {
+                // 把这一段运行时长合入累计值,然后清空 start
+                const long long start = run_start_ms_epoch.load();
+                if (start > 0) {
+                    total_run_ms.fetch_add(static_cast<unsigned long long>(now_ms() - start));
+                }
+                run_start_ms_epoch.store(0);
                 add_log("连点循环已停止");
                 was_running = false;
             }
