@@ -29,6 +29,7 @@ include_directories(
         ${INTERCEPTION_DIR}
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/stb
 )
 
 # 4. 应用源码(按职责拆分)
@@ -41,7 +42,7 @@ set(APP_SOURCES
 )
 
 # WIN32 -> 不显示控制台窗口
-add_executable(DriverMouseMacro WIN32 main.cpp ${APP_SOURCES} ${IMGUI_SOURCES})
+add_executable(DriverMouseMacro WIN32 main.cpp app.rc ${APP_SOURCES} ${IMGUI_SOURCES})
 
 # 链接 Interception 用户态 shim + DX11 渲染所需库
 target_link_libraries(DriverMouseMacro
@@ -56,6 +57,13 @@ add_custom_command(TARGET DriverMouseMacro POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${INTERCEPTION_DIR}/interception.dll"
         $<TARGET_FILE_DIR:DriverMouseMacro>
+)
+
+# 复制 assets 目录到构建输出
+add_custom_command(TARGET DriverMouseMacro POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/assets"
+        "$<TARGET_FILE_DIR:DriverMouseMacro>/assets"
 )
 
 target_link_options(DriverMouseMacro PRIVATE

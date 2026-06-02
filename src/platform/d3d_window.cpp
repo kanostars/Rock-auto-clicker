@@ -2,6 +2,9 @@
 
 #include <tchar.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "../../external/stb/stb_image.h"
+
 #include "imgui.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -96,6 +99,42 @@ LRESULT WINAPI wnd_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+ID3D11ShaderResourceView* load_texture(const char* path, int* out_w, int* out_h) {
+    int w, h, channels;
+    unsigned char* data = stbi_load(path, &w, &h, &channels, 4); // 强制 RGBA
+    if (!data) return nullptr;
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width            = w;
+    desc.Height           = h;
+    desc.MipLevels        = 1;
+    desc.ArraySize        = 1;
+    desc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage            = D3D11_USAGE_DEFAULT;
+    desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA sr{};
+    sr.pSysMem          = data;
+    sr.SysMemPitch      = w * 4;
+
+    ID3D11Texture2D* tex = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(g_pd3dDevice->CreateTexture2D(&desc, &sr, &tex))) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvd{};
+        srvd.Format              = desc.Format;
+        srvd.ViewDimension       = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvd.Texture2D.MipLevels = 1;
+        g_pd3dDevice->CreateShaderResourceView(tex, &srvd, &srv);
+        tex->Release();
+    }
+    stbi_image_free(data);
+
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return srv;
 }
 
 } // namespace app

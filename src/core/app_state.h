@@ -13,6 +13,7 @@ namespace app {
 // 共享运行时状态
 extern std::atomic<bool>               is_macro_running;
 extern std::atomic<InterceptionDevice> active_mouse_id;
+extern std::atomic<InterceptionDevice> active_keyboard_id; // 键盘设备，供驱动级按键注入使用
 extern InterceptionContext             g_context;
 
 // 用户可调参数
@@ -22,6 +23,32 @@ extern std::atomic<int> param_press_base_ms;
 extern std::atomic<int> param_press_jitter_ms;
 extern std::atomic<int> param_clicks_per_rest;
 extern std::atomic<int> param_rest_seconds;
+
+// 狂暴模式
+extern std::atomic<bool>    g_berserk_enabled;
+extern std::atomic<uint8_t> g_berserk_mount_vk;
+extern std::atomic<int>     g_berserk_lclick_ms;
+extern std::atomic<int>     g_berserk_gap1_ms;
+extern std::atomic<int>     g_berserk_mount_ms;
+extern std::atomic<int>     g_berserk_gap2_ms;
+
+// 用户自定义的默认参数（"恢复默认" 读取此处，"设为默认" 写入此处）
+struct ParamDefaults {
+    // 普通点击
+    int loop_speed_ms     = 200;
+    int jitter_ms         = 20;
+    int press_base_ms     = 200;
+    int press_jitter_ms   = 10;
+    int clicks_per_rest   = 0;
+    int rest_seconds      = 3;
+    // 狂暴
+    int berserk_lclick_ms = 110;
+    int berserk_gap1_ms   = 100;
+    int berserk_mount_ms  = 30;
+    int berserk_gap2_ms   = 30;
+};
+extern ParamDefaults g_param_defaults;
+extern std::mutex    g_param_defaults_mutex;
 
 // 统计
 extern std::atomic<unsigned long long> total_click_count;

@@ -23,4 +23,8 @@ extern UINT g_resize_height;
 
 LRESULT WINAPI wnd_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+// 从文件加载 PNG/JPG/BMP 并创建 D3D11 ShaderResourceView
+// 返回 nullptr 表示加载失败
+ID3D11ShaderResourceView* load_texture(const char* path, int* out_w = nullptr, int* out_h = nullptr);
+
 } // namespace app

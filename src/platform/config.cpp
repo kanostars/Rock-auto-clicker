@@ -15,8 +15,9 @@ static std::wstring config_path() {
     return buf;
 }
 
-static const wchar_t* SEC_PARAMS  = L"params";
-static const wchar_t* SEC_HOTKEY  = L"hotkey";
+static const wchar_t* SEC_PARAMS    = L"params";
+static const wchar_t* SEC_HOTKEY    = L"hotkey";
+static const wchar_t* SEC_DEFAULTS  = L"defaults";
 
 void load_config() {
     const std::wstring path = config_path();
@@ -28,6 +29,13 @@ void load_config() {
     param_press_jitter_ms.store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"press_jitter_ms",  10, p)));
     param_clicks_per_rest.store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"clicks_per_rest",   0, p)));
     param_rest_seconds   .store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"rest_seconds",       3, p)));
+
+    g_berserk_enabled  .store(GetPrivateProfileIntW(SEC_PARAMS, L"berserk_enabled",  0,        p) != 0);
+    g_berserk_mount_vk .store(static_cast<uint8_t>(GetPrivateProfileIntW(SEC_PARAMS, L"berserk_mount_vk", VK_LSHIFT, p)));
+    g_berserk_lclick_ms.store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"berserk_lclick_ms", 110, p)));
+    g_berserk_gap1_ms  .store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"berserk_gap1_ms",   100, p)));
+    g_berserk_mount_ms .store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"berserk_mount_ms",   50, p)));
+    g_berserk_gap2_ms  .store(static_cast<int>(GetPrivateProfileIntW(SEC_PARAMS, L"berserk_gap2_ms",    50, p)));
 
     HotkeyConfig hk;
     hk.mouse_btn3 = GetPrivateProfileIntW(SEC_HOTKEY, L"mouse_btn3", 1, p) != 0;
@@ -42,6 +50,20 @@ void load_config() {
             hk.vkeys[i] = static_cast<uint8_t>(GetPrivateProfileIntW(SEC_HOTKEY, vkey_keys[i], 0, p));
     }
     { std::lock_guard<std::mutex> lk(g_hotkey_mutex); g_hotkey = hk; }
+
+    // 用户自定义默认值(若 config 缺失则用 struct 内置默认)
+    ParamDefaults d;
+    d.loop_speed_ms     = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"loop_speed_ms",     d.loop_speed_ms,     p));
+    d.jitter_ms         = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"jitter_ms",         d.jitter_ms,         p));
+    d.press_base_ms     = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"press_base_ms",     d.press_base_ms,     p));
+    d.press_jitter_ms   = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"press_jitter_ms",   d.press_jitter_ms,   p));
+    d.clicks_per_rest   = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"clicks_per_rest",   d.clicks_per_rest,   p));
+    d.rest_seconds      = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"rest_seconds",      d.rest_seconds,      p));
+    d.berserk_lclick_ms = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"berserk_lclick_ms", d.berserk_lclick_ms, p));
+    d.berserk_gap1_ms   = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"berserk_gap1_ms",   d.berserk_gap1_ms,   p));
+    d.berserk_mount_ms  = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"berserk_mount_ms",  d.berserk_mount_ms,  p));
+    d.berserk_gap2_ms   = static_cast<int>(GetPrivateProfileIntW(SEC_DEFAULTS, L"berserk_gap2_ms",   d.berserk_gap2_ms,   p));
+    { std::lock_guard<std::mutex> lk(g_param_defaults_mutex); g_param_defaults = d; }
 }
 
 void save_config() {
@@ -60,6 +82,12 @@ void save_config() {
     write(SEC_PARAMS, L"press_jitter_ms", param_press_jitter_ms.load());
     write(SEC_PARAMS, L"clicks_per_rest", param_clicks_per_rest.load());
     write(SEC_PARAMS, L"rest_seconds",    param_rest_seconds   .load());
+    write(SEC_PARAMS, L"berserk_enabled",   g_berserk_enabled  .load() ? 1 : 0);
+    write(SEC_PARAMS, L"berserk_mount_vk",  g_berserk_mount_vk .load());
+    write(SEC_PARAMS, L"berserk_lclick_ms", g_berserk_lclick_ms.load());
+    write(SEC_PARAMS, L"berserk_gap1_ms",   g_berserk_gap1_ms  .load());
+    write(SEC_PARAMS, L"berserk_mount_ms",  g_berserk_mount_ms .load());
+    write(SEC_PARAMS, L"berserk_gap2_ms",   g_berserk_gap2_ms  .load());
 
     HotkeyConfig hk;
     { std::lock_guard<std::mutex> lk(g_hotkey_mutex); hk = g_hotkey; }
@@ -74,6 +102,20 @@ void save_config() {
         for (int i = 0; i < 4; ++i)
             write(SEC_HOTKEY, vkey_keys[i], hk.vkeys[i]);
     }
+
+    // 用户自定义默认值
+    ParamDefaults d;
+    { std::lock_guard<std::mutex> lk(g_param_defaults_mutex); d = g_param_defaults; }
+    write(SEC_DEFAULTS, L"loop_speed_ms",     d.loop_speed_ms);
+    write(SEC_DEFAULTS, L"jitter_ms",         d.jitter_ms);
+    write(SEC_DEFAULTS, L"press_base_ms",     d.press_base_ms);
+    write(SEC_DEFAULTS, L"press_jitter_ms",   d.press_jitter_ms);
+    write(SEC_DEFAULTS, L"clicks_per_rest",   d.clicks_per_rest);
+    write(SEC_DEFAULTS, L"rest_seconds",      d.rest_seconds);
+    write(SEC_DEFAULTS, L"berserk_lclick_ms", d.berserk_lclick_ms);
+    write(SEC_DEFAULTS, L"berserk_gap1_ms",   d.berserk_gap1_ms);
+    write(SEC_DEFAULTS, L"berserk_mount_ms",  d.berserk_mount_ms);
+    write(SEC_DEFAULTS, L"berserk_gap2_ms",   d.berserk_gap2_ms);
 }
 
 } // namespace app

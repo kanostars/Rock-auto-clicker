@@ -3,10 +3,14 @@
 #include <chrono>
 #include <ctime>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 namespace app {
 
 std::atomic<bool>               is_macro_running{false};
 std::atomic<InterceptionDevice> active_mouse_id{0};
+std::atomic<InterceptionDevice> active_keyboard_id{0};
 InterceptionContext             g_context = nullptr;
 
 std::atomic<int> param_loop_speed_ms{500};
@@ -15,6 +19,16 @@ std::atomic<int> param_press_base_ms{10};
 std::atomic<int> param_press_jitter_ms{10};
 std::atomic<int> param_clicks_per_rest{0};
 std::atomic<int> param_rest_seconds{3};
+
+std::atomic<bool>    g_berserk_enabled{false};
+std::atomic<uint8_t> g_berserk_mount_vk{VK_LSHIFT};
+std::atomic<int>     g_berserk_lclick_ms{110};
+std::atomic<int>     g_berserk_gap1_ms{100};
+std::atomic<int>     g_berserk_mount_ms{30};
+std::atomic<int>     g_berserk_gap2_ms{30};
+
+ParamDefaults g_param_defaults{};
+std::mutex    g_param_defaults_mutex;
 
 std::atomic<unsigned long long> total_click_count{0};
 std::atomic<unsigned long long> total_run_ms{0};

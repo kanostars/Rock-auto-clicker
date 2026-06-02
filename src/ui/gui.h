@@ -1,8 +1,13 @@
 #pragma once
 
+#include <d3d11.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 namespace app {
 
-// 渲染整个 ImGui 主界面(顶部 LOGO + 标签页 + 底部开关按钮)
 void render_gui();
+void set_logo_texture(ID3D11ShaderResourceView* srv, int w, int h);
+void set_gui_hwnd(HWND hwnd);
 
 } // namespace app

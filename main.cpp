@@ -42,7 +42,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowW(wc.lpszClassName, L"连点器 v1.1",
                               WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
-                              100, 100, 460, 600,
+                              100, 100, 460, 640,
                               nullptr, nullptr, wc.hInstance, nullptr);
 
     if (!app::create_device_d3d(hwnd)) {
@@ -53,6 +53,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
+    app::set_gui_hwnd(hwnd);
 
     // ---- ImGui ----
     IMGUI_CHECKVERSION();
@@ -84,6 +85,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(app::d3d_device(), app::d3d_context());
+
+    // ---- 加载 logo 纹理(从 exe 同目录的 assets/ 找)----
+    {
+        wchar_t exe_dir[MAX_PATH];
+        GetModuleFileNameW(nullptr, exe_dir, MAX_PATH);
+        wchar_t* last_slash = wcsrchr(exe_dir, L'\\');
+        if (last_slash) *(last_slash + 1) = L'\0';
+
+        // wchar → char(仅 ASCII 路径)
+        char path[MAX_PATH];
+        WideCharToMultiByte(CP_ACP, 0, exe_dir, -1, path, MAX_PATH, nullptr, nullptr);
+        strncat_s(path, "assets\\favicon.png", MAX_PATH);
+
+        int lw = 0, lh = 0;
+        auto* srv = app::load_texture(path, &lw, &lh);
+        app::set_logo_texture(srv, lw, lh);
+        if (!srv) app::add_log("[警告] logo 图片加载失败，使用默认图标", app::LogLevel::WARN);
+    }
 
     // ---- 主循环 ----
     bool done = false;

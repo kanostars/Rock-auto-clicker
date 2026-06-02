@@ -1,9 +1,11 @@
 #include "gui.h"
 #include "core/app_state.h"
+#include "platform/config.h"
 
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -12,7 +14,23 @@
 
 namespace app {
 
-static int g_active_tab = 0; // 0=首页 1=日志 2=测试
+static int g_active_tab = 0;
+
+// logo 纹理
+static ID3D11ShaderResourceView* g_logo_srv = nullptr;
+static int g_logo_w = 0, g_logo_h = 0;
+
+// 窗口句柄(用于置顶切换)
+static HWND  g_hwnd       = nullptr;
+static bool  g_always_top = false;
+
+void set_logo_texture(ID3D11ShaderResourceView* srv, int w, int h) {
+    g_logo_srv = srv;
+    g_logo_w   = w;
+    g_logo_h   = h;
+}
+
+void set_gui_hwnd(HWND hwnd) { g_hwnd = hwnd; }
 
 // 把毫秒格式化成 HH:MM:SS
 static std::string format_hms(unsigned long long ms) {
@@ -39,6 +57,22 @@ static unsigned long long current_run_ms() {
 }
 
 void render_gui() {
+    const bool berserk = g_berserk_enabled.load();
+
+    // 狂暴模式:整体偏红(Tab/标题/标签等控件)
+    int color_pushes = 0;
+    if (berserk) {
+        ImGui::PushStyleColor(ImGuiCol_TabActive,           ImVec4(0.85f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TabHovered,          ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Tab,                 ImVec4(0.65f, 0.20f, 0.20f, 0.7f));
+        ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive,  ImVec4(0.75f, 0.22f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg,             ImVec4(0.98f, 0.92f, 0.92f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,      ImVec4(1.00f, 0.86f, 0.86f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive,       ImVec4(1.00f, 0.80f, 0.80f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Separator,           ImVec4(0.85f, 0.25f, 0.25f, 0.6f));
+        color_pushes = 8;
+    }
+
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -61,11 +95,52 @@ void render_gui() {
         float header_h = 60.0f;
         float region_w = ImGui::GetContentRegionAvail().x;
         ImVec2 p1 = ImVec2(p0.x + region_w, p0.y + header_h);
-        dl->AddRectFilled(p0, p1, IM_COL32(35, 90, 160, 255));
+        dl->AddRectFilled(p0, p1, berserk ? IM_COL32(160, 35, 35, 255) : IM_COL32(35, 90, 160, 255));
 
         float cx = p0.x + 30, cy = p0.y + header_h * 0.5f;
-        dl->AddCircleFilled(ImVec2(cx, cy), 18.0f, IM_COL32(255, 255, 255, 255));
-        dl->AddText(ImVec2(cx - 9, cy - 9), IM_COL32(35, 90, 160, 255), "BC");
+        const float logo_size = 36.0f;
+
+        // 透明可点击区域覆盖 logo 位置，检测点击切换置顶
+        ImGui::SetCursorScreenPos(ImVec2(cx - logo_size * 0.5f, cy - logo_size * 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1,1,1,0.15f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1,1,1,0.25f));
+        if (ImGui::Button("##logo_btn", ImVec2(logo_size, logo_size))) {
+            g_always_top = !g_always_top;
+            if (g_hwnd) {
+                SetWindowPos(g_hwnd,
+                             g_always_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+                             0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE);
+            }
+            add_log(g_always_top ? u8"窗口已置顶" : u8"窗口已取消置顶", LogLevel::INFO);
+        }
+        ImGui::PopStyleColor(3);
+
+        // 实际图像/文字（画在按钮下方，不阻断点击）
+        if (g_logo_srv && g_logo_w > 0 && g_logo_h > 0) {
+            float draw_w, draw_h;
+            if (g_logo_w >= g_logo_h) {
+                draw_w = logo_size;
+                draw_h = logo_size * g_logo_h / g_logo_w;
+            } else {
+                draw_h = logo_size;
+                draw_w = logo_size * g_logo_w / g_logo_h;
+            }
+            ImVec2 img_pos(cx - draw_w * 0.5f, cy - draw_h * 0.5f);
+            dl->AddImage((ImTextureID)(intptr_t)g_logo_srv,
+                         img_pos, ImVec2(img_pos.x + draw_w, img_pos.y + draw_h));
+        } else {
+            dl->AddCircleFilled(ImVec2(cx, cy), 18.0f, IM_COL32(255, 255, 255, 255));
+            dl->AddText(ImVec2(cx - 9, cy - 9),
+                        berserk ? IM_COL32(160, 35, 35, 255) : IM_COL32(35, 90, 160, 255), "BC");
+        }
+
+        // 置顶时在 logo 右上角画小图钉指示
+        if (g_always_top) {
+            dl->AddCircleFilled(ImVec2(cx + 14, cy - 14), 5.0f, IM_COL32(255, 220, 50, 255));
+            dl->AddCircle(     ImVec2(cx + 14, cy - 14), 5.0f, IM_COL32(200, 160, 0,  255));
+        }
 
         ImGui::SetCursorScreenPos(ImVec2(p0.x + 60, p0.y + 18));
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
@@ -154,14 +229,18 @@ void render_gui() {
             g_active_tab = 0;
             ImGui::Dummy(ImVec2(0, 8));
 
+            // 狂暴模式下隐藏点击参数和按键时长,只保留休息策略
+            if (!berserk) {
             // "点击参数设置" 标题 + 右侧预设按钮同行
             ImGui::TextUnformatted(u8"点击参数设置");
             ImGui::SameLine();
             {
-                // 两个小按钮右对齐
+                // 三个小按钮右对齐: 设为默认 / 默认 / 点射
                 const float btn_w = 48.0f;
+                const float save_w = 76.0f; // "设为默认" 较宽
                 const float spacing = ImGui::GetStyle().ItemSpacing.x;
-                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btn_w * 2 - spacing);
+                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x
+                                     - save_w - btn_w * 2 - spacing * 2);
 
                 auto apply_preset = [](int loop, int jitter, int press_base, int press_jitter,
                                        const char* name) {
@@ -172,8 +251,25 @@ void render_gui() {
                     add_log(std::string(u8"[预设] 切换至 ") + name, LogLevel::BEHAVIOR);
                 };
 
-                if (ImGui::SmallButton(u8"默认"))
-                    apply_preset(200, 20, 200, 10, u8"默认");
+                // 把当前点击参数写入用户默认
+                if (ImGui::SmallButton(u8"设为默认##home")) {
+                    {
+                        std::lock_guard<std::mutex> lk(g_param_defaults_mutex);
+                        g_param_defaults.loop_speed_ms   = param_loop_speed_ms  .load();
+                        g_param_defaults.jitter_ms       = param_jitter_ms      .load();
+                        g_param_defaults.press_base_ms   = param_press_base_ms  .load();
+                        g_param_defaults.press_jitter_ms = param_press_jitter_ms.load();
+                    }
+                    save_config();
+                    add_log(u8"[预设] 当前点击参数已保存为默认", LogLevel::BEHAVIOR);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton(u8"默认")) {
+                    ParamDefaults d;
+                    { std::lock_guard<std::mutex> lk(g_param_defaults_mutex); d = g_param_defaults; }
+                    apply_preset(d.loop_speed_ms, d.jitter_ms, d.press_base_ms, d.press_jitter_ms,
+                                 u8"默认");
+                }
                 ImGui::SameLine();
                 if (ImGui::SmallButton(u8"点射"))
                     apply_preset(350, 20, 30, 10, u8"点射");
@@ -228,6 +324,14 @@ void render_gui() {
 
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 4));
+            } else {
+                // 狂暴模式提示
+                ImGui::TextColored(ImVec4(0.85f, 0.25f, 0.25f, 1.0f), u8"⚡ 狂暴模式已开启");
+                ImGui::TextDisabled(u8"  循环固定: 左键200ms → 间隔150ms → 骑乘键50ms → 间隔50ms");
+                ImGui::Dummy(ImVec2(0, 8));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0, 4));
+            }
             ImGui::TextUnformatted(u8"休息策略");
             ImGui::Dummy(ImVec2(0, 4));
 
@@ -482,6 +586,133 @@ void render_gui() {
             default: rec_state = RecState::IDLE; break;
             }
 
+            // ---- 狂暴模式 ----
+            ImGui::Dummy(ImVec2(0, 14));
+            ImGui::TextUnformatted(u8"狂暴模式");
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 6));
+
+            bool berserk = g_berserk_enabled.load();
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                berserk ? ImVec4(0.85f, 0.25f, 0.25f, 1.0f) : ImVec4(0.55f, 0.55f, 0.58f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                berserk ? ImVec4(0.95f, 0.35f, 0.35f, 1.0f) : ImVec4(0.65f, 0.65f, 0.68f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                berserk ? ImVec4(0.85f, 0.25f, 0.25f, 1.0f) : ImVec4(0.55f, 0.55f, 0.58f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            if (ImGui::Button(berserk ? u8"狂暴模式: 已开启" : u8"狂暴模式: 关闭", ImVec2(160, 0))) {
+                g_berserk_enabled.store(!berserk);
+                add_log(std::string(u8"[狂暴] ") + (!berserk ? u8"已开启" : u8"已关闭"),
+                        LogLevel::BEHAVIOR);
+            }
+            ImGui::PopStyleColor(4);
+
+            ImGui::SameLine();
+
+            // 骑乘技能触发键(单键录制,区分左右修饰键)
+            uint8_t cur_mvk = g_berserk_mount_vk.load();
+            char mvk_label[24];
+            switch (cur_mvk) {
+                case VK_LSHIFT:   snprintf(mvk_label, sizeof(mvk_label), "Left Shift");  break;
+                case VK_RSHIFT:   snprintf(mvk_label, sizeof(mvk_label), "Right Shift"); break;
+                case VK_LCONTROL: snprintf(mvk_label, sizeof(mvk_label), "Left Ctrl");   break;
+                case VK_RCONTROL: snprintf(mvk_label, sizeof(mvk_label), "Right Ctrl");  break;
+                case VK_LMENU:    snprintf(mvk_label, sizeof(mvk_label), "Left Alt");    break;
+                case VK_RMENU:    snprintf(mvk_label, sizeof(mvk_label), "Right Alt");   break;
+                case VK_TAB:      snprintf(mvk_label, sizeof(mvk_label), "Tab");         break;
+                case VK_SPACE:    snprintf(mvk_label, sizeof(mvk_label), "Space");       break;
+                default:          vkey_name(cur_mvk, mvk_label, sizeof(mvk_label));      break;
+            }
+
+            static bool mvk_recording = false;
+            if (!mvk_recording) {
+                ImGui::Text(u8"骑乘键: %s", mvk_label);
+                ImGui::SameLine();
+                if (ImGui::SmallButton(u8"录制##mvk")) {
+                    mvk_recording = true;
+                    g_hotkey_recording.store(true);
+                }
+            } else {
+                ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.1f, 1.0f), u8"按下骑乘技能键…");
+                ImGui::SameLine();
+                if (ImGui::SmallButton(u8"取消##mvk")) {
+                    mvk_recording = false;
+                    g_hotkey_recording.store(false);
+                }
+                // 优先匹配左/右修饰键,再匹配普通键
+                uint8_t captured = 0;
+                static const int candidates[] = {
+                    VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU,
+                    VK_TAB, VK_SPACE,
+                    VK_F1,VK_F2,VK_F3,VK_F4,VK_F5,VK_F6,VK_F7,VK_F8,
+                    VK_F9,VK_F10,VK_F11,VK_F12,
+                };
+                for (int vk : candidates) {
+                    if (GetAsyncKeyState(vk) & 0x8000) { captured = (uint8_t)vk; break; }
+                }
+                if (captured == 0) {
+                    for (int vk = '0'; vk <= 'Z'; ++vk) {
+                        if (GetAsyncKeyState(vk) & 0x8000) { captured = (uint8_t)vk; break; }
+                    }
+                }
+                if (captured != 0) {
+                    g_berserk_mount_vk.store(captured);
+                    add_log(u8"[狂暴] 骑乘键已更新", LogLevel::BEHAVIOR);
+                    mvk_recording = false;
+                    g_hotkey_recording.store(false);
+                }
+            }
+
+            ImGui::TextDisabled(u8"  循环: 左键按下 → 间隔1 → 骑乘键按下 → 间隔2(循环)");
+            ImGui::TextDisabled(u8"  当前: 左键%dms → 间隔%dms → 骑乘键%dms → 间隔%dms",
+                g_berserk_lclick_ms.load(), g_berserk_gap1_ms.load(),
+                g_berserk_mount_ms.load(),  g_berserk_gap2_ms.load());
+            ImGui::Dummy(ImVec2(0, 8));
+
+            // 四个时长参数
+            auto berserk_input = [](const char* label, std::atomic<int>& param,
+                                    int lo, int hi, const char* hint) {
+                int v = param.load();
+                if (ImGui::InputInt(label, &v, 10, 50)) {
+                    if (v < lo) v = lo;
+                    if (v > hi) v = hi;
+                    param.store(v);
+                }
+                ImGui::TextDisabled(hint);
+            };
+
+            berserk_input(u8"左键按下时长 (ms)", g_berserk_lclick_ms, 1, 5000,
+                          u8"  左键按下并持续的时间");
+            berserk_input(u8"间隔1 (ms)",        g_berserk_gap1_ms,   0, 5000,
+                          u8"  左键松开到骑乘键按下的间隔");
+            berserk_input(u8"骑乘键时长 (ms)",   g_berserk_mount_ms,  1, 5000,
+                          u8"  骑乘技能键按下并持续的时间");
+            berserk_input(u8"循环间隔 (ms)",     g_berserk_gap2_ms,   0, 5000,
+                          u8"  骑乘键松开到下一次循环的间隔");
+
+            ImGui::Dummy(ImVec2(0, 4));
+            if (ImGui::SmallButton(u8"恢复默认##berserk")) {
+                ParamDefaults d;
+                { std::lock_guard<std::mutex> lk(g_param_defaults_mutex); d = g_param_defaults; }
+                g_berserk_lclick_ms.store(d.berserk_lclick_ms);
+                g_berserk_gap1_ms  .store(d.berserk_gap1_ms);
+                g_berserk_mount_ms .store(d.berserk_mount_ms);
+                g_berserk_gap2_ms  .store(d.berserk_gap2_ms);
+                add_log(u8"[狂暴] 参数已恢复默认", LogLevel::BEHAVIOR);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(u8"设为默认##berserk")) {
+                {
+                    std::lock_guard<std::mutex> lk(g_param_defaults_mutex);
+                    g_param_defaults.berserk_lclick_ms = g_berserk_lclick_ms.load();
+                    g_param_defaults.berserk_gap1_ms   = g_berserk_gap1_ms  .load();
+                    g_param_defaults.berserk_mount_ms  = g_berserk_mount_ms .load();
+                    g_param_defaults.berserk_gap2_ms   = g_berserk_gap2_ms  .load();
+                }
+                save_config();
+                add_log(u8"[狂暴] 当前参数已保存为默认", LogLevel::BEHAVIOR);
+            }
+
             ImGui::EndTabItem();
         }
 
@@ -557,10 +788,13 @@ void render_gui() {
                 if (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) active_keys.push_back("Button4");
                 if (GetAsyncKeyState(VK_XBUTTON2) & 0x8000) active_keys.push_back("Button5");
 
-                // 修饰键
-                if (GetAsyncKeyState(VK_CONTROL) & 0x8000) active_keys.push_back("Ctrl");
-                if (GetAsyncKeyState(VK_SHIFT)   & 0x8000) active_keys.push_back("Shift");
-                if (GetAsyncKeyState(VK_MENU)    & 0x8000) active_keys.push_back("Alt");
+                // 修饰键(区分左右)
+                if (GetAsyncKeyState(VK_LCONTROL) & 0x8000) active_keys.push_back("Left Ctrl");
+                if (GetAsyncKeyState(VK_RCONTROL) & 0x8000) active_keys.push_back("Right Ctrl");
+                if (GetAsyncKeyState(VK_LSHIFT)   & 0x8000) active_keys.push_back("Left Shift");
+                if (GetAsyncKeyState(VK_RSHIFT)   & 0x8000) active_keys.push_back("Right Shift");
+                if (GetAsyncKeyState(VK_LMENU)    & 0x8000) active_keys.push_back("Left Alt");
+                if (GetAsyncKeyState(VK_RMENU)    & 0x8000) active_keys.push_back("Right Alt");
 
                 // 常用功能键
                 if (GetAsyncKeyState(VK_RETURN) & 0x8000) active_keys.push_back("Enter");
@@ -672,7 +906,19 @@ void render_gui() {
         ImGui::PopStyleColor(3);
     }
 
+    // ---- 版权 ----
+    {
+        const char* copyright = u8"© 2026 北辰_kano. All rights reserved.";
+        float text_w = ImGui::CalcTextSize(copyright).x;
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - text_w) * 0.5f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.60f, 1.0f));
+        ImGui::TextUnformatted(copyright);
+        ImGui::PopStyleColor();
+    }
+
     ImGui::End();
+    if (color_pushes > 0) ImGui::PopStyleColor(color_pushes);
 }
 
 } // namespace app
