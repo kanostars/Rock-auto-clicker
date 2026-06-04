@@ -24,6 +24,60 @@ static int g_logo_w = 0, g_logo_h = 0;
 static HWND  g_hwnd       = nullptr;
 static bool  g_always_top = false;
 
+// 迷你模式(胶囊状态条)
+static bool g_compact_mode = false;
+static const int g_normal_window_w  = 460;
+static const int g_normal_window_h  = 640;
+static const int g_compact_window_w = 400;
+static const int g_compact_window_h = 56;
+
+// 胶囊拖动状态
+static bool g_compact_dragging = false;
+static ImVec2 g_drag_offset(0, 0);
+
+static void toggle_pin() {
+    g_always_top = !g_always_top;
+    if (g_hwnd) {
+        SetWindowPos(g_hwnd, g_always_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+                     0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+    add_log(g_always_top ? u8"窗口已置顶" : u8"窗口已取消置顶", LogLevel::INFO);
+}
+
+static void set_compact_mode(bool compact) {
+    if (g_compact_mode == compact) return;
+    g_compact_mode = compact;
+    if (g_hwnd) {
+        // 切换窗口样式:小窗模式下完全隐藏标题栏/边框,默认模式恢复为创建时的样式
+        LONG_PTR style = GetWindowLongPtrW(g_hwnd, GWL_STYLE);
+        style &= ~(WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME | WS_POPUP | WS_BORDER);
+        if (compact) {
+            style |= WS_POPUP;
+        } else {
+            style |= (WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME);
+        }
+        SetWindowLongPtrW(g_hwnd, GWL_STYLE, style);
+
+        RECT r; GetWindowRect(g_hwnd, &r);
+        SetWindowPos(g_hwnd, nullptr,
+                     r.left, r.top,
+                     compact ? g_compact_window_w : g_normal_window_w,
+                     compact ? g_compact_window_h : g_normal_window_h,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+        // 胶囊圆角:用 region 把窗口外框裁成胶囊形,四角变为真正的透明
+        if (compact) {
+            HRGN rgn = CreateRoundRectRgn(0, 0,
+                g_compact_window_w + 1, g_compact_window_h + 1,
+                g_compact_window_h, g_compact_window_h);
+            SetWindowRgn(g_hwnd, rgn, TRUE);
+        } else {
+            SetWindowRgn(g_hwnd, nullptr, TRUE);
+        }
+    }
+    add_log(compact ? u8"切换为迷你模式" : u8"已展开窗口", LogLevel::BEHAVIOR);
+}
+
 void set_logo_texture(ID3D11ShaderResourceView* srv, int w, int h) {
     g_logo_srv = srv;
     g_logo_w   = w;
@@ -58,6 +112,174 @@ static unsigned long long current_run_ms() {
 
 void render_gui() {
     const bool berserk = g_berserk_enabled.load();
+
+    if (g_compact_mode) {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGuiWindowFlags cflags = ImGuiWindowFlags_NoTitleBar |
+                                  ImGuiWindowFlags_NoResize |
+                                  ImGuiWindowFlags_NoMove |
+                                  ImGuiWindowFlags_NoCollapse |
+                                  ImGuiWindowFlags_NoScrollbar |
+                                  ImGuiWindowFlags_NoBringToFrontOnFocus;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::Begin("##compact", nullptr, cflags);
+        ImGui::PopStyleVar(3);
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 p0 = ImGui::GetWindowPos();
+        ImVec2 sz = ImGui::GetWindowSize();
+        ImVec2 p1 = ImVec2(p0.x + sz.x, p0.y + sz.y);
+
+        // 主题色
+        ImU32 bg_top    = berserk ? IM_COL32(178, 45, 45, 255) : IM_COL32(48, 105, 178, 255);
+        ImU32 bg_bottom = berserk ? IM_COL32(140, 28, 28, 255) : IM_COL32(28,  78, 145, 255);
+        ImU32 bg        = berserk ? IM_COL32(160, 35, 35, 255) : IM_COL32(35,  90, 160, 255);
+
+        // 胶囊背景:渐变 + 微高光
+        float radius = sz.y * 0.5f;
+        dl->AddRectFilledMultiColor(p0, p1, bg_top, bg_top, bg_bottom, bg_bottom);
+        // 顶部高光带(覆盖到圆角内)
+        dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p1.x, p0.y + sz.y * 0.45f),
+                          IM_COL32(255, 255, 255, 22));
+        // 圆角遮罩(用四角白色透明圆模拟,不必要;直接画外边框圆角)
+        dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 40), radius, 0, 1.5f);
+
+        // ---- LOGO + 置顶圆点 ----
+        float cy = p0.y + sz.y * 0.5f;
+        float cx = p0.x + radius;
+        const float logo_size = sz.y - 22.0f; // 上下各留 11px
+
+        ImGui::SetCursorScreenPos(ImVec2(cx - logo_size * 0.5f, cy - logo_size * 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1,1,1,0.18f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1,1,1,0.28f));
+        if (ImGui::Button("##c_logo_btn", ImVec2(logo_size, logo_size))) {
+            toggle_pin();
+        }
+        ImGui::PopStyleColor(3);
+
+        if (g_logo_srv && g_logo_w > 0 && g_logo_h > 0) {
+            float dw, dh;
+            if (g_logo_w >= g_logo_h) {
+                dw = logo_size; dh = logo_size * g_logo_h / g_logo_w;
+            } else {
+                dh = logo_size; dw = logo_size * g_logo_w / g_logo_h;
+            }
+            ImVec2 ip(cx - dw * 0.5f, cy - dh * 0.5f);
+            dl->AddImage((ImTextureID)(intptr_t)g_logo_srv, ip,
+                         ImVec2(ip.x + dw, ip.y + dh));
+        } else {
+            dl->AddCircleFilled(ImVec2(cx, cy), logo_size * 0.5f, IM_COL32(255,255,255,255));
+            ImVec2 t_sz = ImGui::CalcTextSize("BC");
+            dl->AddText(ImVec2(cx - t_sz.x * 0.5f, cy - t_sz.y * 0.5f), bg, "BC");
+        }
+        if (g_always_top) {
+            float pin_off = logo_size * 0.42f;
+            dl->AddCircleFilled(ImVec2(cx + pin_off, cy - pin_off), 4.5f,
+                                IM_COL32(255, 220, 50, 255));
+            dl->AddCircle(     ImVec2(cx + pin_off, cy - pin_off), 4.5f,
+                                IM_COL32(180, 130, 0,  255), 0, 1.0f);
+        }
+
+        // ---- 三个等宽模块:连点器 / 点击 / 时长(每个模块文字居中,单行) ----
+        float text_x = p0.x + radius * 2 + 4;
+        float dot_r = 5.0f;
+        float right_pad = radius * 0.5f + 14;       // 右上角圆点为锚
+        float content_right = p1.x - right_pad;
+
+        float section_total_w = content_right - text_x;
+        float section_w       = section_total_w / 3.0f;
+        float sec1_left = text_x;
+        float sec2_left = sec1_left + section_w;
+        float sec3_left = sec2_left + section_w;
+
+        std::string sec2_text = std::string(u8"点击:") + std::to_string(total_click_count.load());
+        std::string sec3_text = std::string(u8"时长:") + format_hms(current_run_ms());
+
+        ImGui::SetWindowFontScale(1.0f); // 调整字体大小以适配更小的高度
+
+        // 模块1:标题(整块可拖拽,长按可拖动窗口,点击展开主窗口)
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1,1,1,0.15f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1,1,1,0.25f));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.5f, 0.5f));
+        ImGui::SetCursorScreenPos(ImVec2(sec1_left, p0.y + 4));
+        
+        ImGui::Button(u8"返回##c_title", ImVec2(section_w, sz.y - 8));
+        
+        // 处理拖动逻辑
+        if (ImGui::IsItemActive() && g_hwnd) {
+            if (!g_compact_dragging && ImGui::GetMouseDragDelta(0).x == 0 && ImGui::GetMouseDragDelta(0).y == 0) {
+                // 刚开始按下,记录偏移
+                POINT cursor_pos;
+                GetCursorPos(&cursor_pos);
+                RECT r;
+                GetWindowRect(g_hwnd, &r);
+                g_drag_offset = ImVec2((float)(cursor_pos.x - r.left), (float)(cursor_pos.y - r.top));
+            }
+            
+            if (ImGui::IsMouseDragging(0, 2.0f)) { // 拖动阈值 2px
+                g_compact_dragging = true;
+                POINT cursor_pos;
+                GetCursorPos(&cursor_pos);
+                SetWindowPos(g_hwnd, nullptr,
+                    cursor_pos.x - (int)g_drag_offset.x,
+                    cursor_pos.y - (int)g_drag_offset.y,
+                    0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+        }
+        
+        // 松开鼠标时检测是否是点击(而非拖动)
+        if (ImGui::IsItemDeactivated()) {
+            if (!g_compact_dragging) {
+                // 这是点击,展开窗口
+                set_compact_mode(false);
+            }
+            g_compact_dragging = false;
+        }
+        
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
+
+        // 模块2、3:统计文本(直接绘制,水平+垂直居中)
+        ImU32 val_col = IM_COL32(255, 255, 255, 245);
+        ImVec2 sec2_sz = ImGui::CalcTextSize(sec2_text.c_str());
+        ImVec2 sec3_sz = ImGui::CalcTextSize(sec3_text.c_str());
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                    ImVec2(sec2_left + (section_w - sec2_sz.x) * 0.5f, cy - sec2_sz.y * 0.5f),
+                    val_col, sec2_text.c_str());
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                    ImVec2(sec3_left + (section_w - sec3_sz.x) * 0.5f, cy - sec3_sz.y * 0.5f),
+                    val_col, sec3_text.c_str());
+
+        ImGui::SetWindowFontScale(1.0f);
+
+        // 模块之间的竖向分割线
+        ImU32 sep_col = IM_COL32(255, 255, 255, 60);
+        float sep_top    = p0.y + 10;
+        float sep_bottom = p1.y - 10;
+        dl->AddLine(ImVec2(sec2_left, sep_top), ImVec2(sec2_left, sep_bottom), sep_col, 1.0f);
+        dl->AddLine(ImVec2(sec3_left, sep_top), ImVec2(sec3_left, sep_bottom), sep_col, 1.0f);
+
+        // ---- 右上角运行状态圆点 + 光晕 ----
+        bool running = is_macro_running.load();
+        ImU32 dot_col   = running ? IM_COL32(80, 230, 100, 255) : IM_COL32(225, 80, 80, 255);
+        ImU32 glow_col  = running ? IM_COL32(80, 230, 100, 70)  : IM_COL32(225, 80, 80, 70);
+        // 紧挨时长文字右边,垂直居中
+        float sec3_text_right = sec3_left + (section_w + sec3_sz.x) * 0.5f;
+        ImVec2 dot_pos(sec3_text_right + 10, cy);
+        dl->AddCircleFilled(dot_pos, dot_r * 1.9f, glow_col);
+        dl->AddCircleFilled(dot_pos, dot_r,        dot_col);
+        dl->AddCircle(      dot_pos, dot_r,        IM_COL32(255, 255, 255, 220), 0, 1.2f);
+
+        ImGui::End();
+        return;
+    }
 
     // 狂暴模式:整体偏红(Tab/标题/标签等控件)
     int color_pushes = 0;
@@ -106,14 +328,7 @@ void render_gui() {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1,1,1,0.15f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1,1,1,0.25f));
         if (ImGui::Button("##logo_btn", ImVec2(logo_size, logo_size))) {
-            g_always_top = !g_always_top;
-            if (g_hwnd) {
-                SetWindowPos(g_hwnd,
-                             g_always_top ? HWND_TOPMOST : HWND_NOTOPMOST,
-                             0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE);
-            }
-            add_log(g_always_top ? u8"窗口已置顶" : u8"窗口已取消置顶", LogLevel::INFO);
+            toggle_pin();
         }
         ImGui::PopStyleColor(3);
 
@@ -142,12 +357,22 @@ void render_gui() {
             dl->AddCircle(     ImVec2(cx + 14, cy - 14), 5.0f, IM_COL32(200, 160, 0,  255));
         }
 
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + 60, p0.y + 18));
+        // 标题文本(可点击切换迷你模式,垂直居中于 header)
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1,1,1,0.15f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1,1,1,0.25f));
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
         ImGui::SetWindowFontScale(1.4f);
-        ImGui::TextUnformatted(u8"连点器 v1.1");
+        ImVec2 title_sz = ImGui::CalcTextSize(u8"连点器 v1.1");
+        float title_btn_w = title_sz.x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + 60, p0.y));
+        if (ImGui::Button(u8"连点器 v1.1##title_btn", ImVec2(title_btn_w, header_h))) {
+            set_compact_mode(true);
+        }
         ImGui::SetWindowFontScale(1.0f);
-        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
 
         // 右上角:本次运行时长(不含暂停)
         {
@@ -327,7 +552,9 @@ void render_gui() {
             } else {
                 // 狂暴模式提示
                 ImGui::TextColored(ImVec4(0.85f, 0.25f, 0.25f, 1.0f), u8"⚡ 狂暴模式已开启");
-                ImGui::TextDisabled(u8"  循环固定: 左键200ms → 间隔150ms → 骑乘键50ms → 间隔50ms");
+                ImGui::TextDisabled(u8"  循环固定: 左键%dms → 间隔%dms → 骑乘键%dms → 间隔%dms",
+                    g_berserk_lclick_ms.load(), g_berserk_gap1_ms.load(),
+                    g_berserk_mount_ms.load(),  g_berserk_gap2_ms.load());
                 ImGui::Dummy(ImVec2(0, 8));
                 ImGui::Separator();
                 ImGui::Dummy(ImVec2(0, 4));
