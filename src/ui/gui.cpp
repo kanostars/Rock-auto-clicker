@@ -197,10 +197,10 @@ void render_gui() {
         float sec2_left = sec1_left + section_w;
         float sec3_left = sec2_left + section_w;
 
-        std::string sec2_text = std::string(u8"点击:") + std::to_string(total_click_count.load());
-        std::string sec3_text = std::string(u8"时长:") + format_hms(current_run_ms());
+        std::string sec2_text = std::to_string(total_click_count.load());
+        std::string sec3_text = format_hms(current_run_ms());
 
-        ImGui::SetWindowFontScale(1.0f); // 调整字体大小以适配更小的高度
+        ImGui::SetWindowFontScale(1.0f);
 
         // 模块1:标题(整块可拖拽,长按可拖动窗口,点击展开主窗口)
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
